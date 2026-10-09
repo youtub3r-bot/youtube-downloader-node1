@@ -4,7 +4,8 @@
   "description": "YouTube media downloader using Node.js and Express",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "tunnel": "cloudflared.exe tunnel --url http://localhost:3000"
   },
   "engines": {
     "node": ">=20"

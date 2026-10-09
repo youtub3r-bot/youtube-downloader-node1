@@ -1,6 +1,7 @@
 node_modules/
 downloads/
 movi3s/
+cloudflared.exe
 .env
 *.log
 .DS_Store
