@@ -167,8 +167,16 @@ app.post("/download", (req, res) => {
     "--js-runtimes",
     "deno,node",
     "--extractor-args",
-    "youtube:player_client=android,web,tv,ios"
+    "youtube:player_client=android,web,tv,ios",
+    "--geo-bypass",
+    "--geo-bypass-country",
+    process.env.GEO_BYPASS_COUNTRY || "IN",
   ];
+
+  // Optional proxy support
+  if (process.env.YTDLP_PROXY || process.env.HTTP_PROXY) {
+    args.push("--proxy", process.env.YTDLP_PROXY || process.env.HTTP_PROXY);
+  }
 
   // Check for cookies.txt in root directory or custom path
   const cookiesPath =
