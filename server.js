@@ -165,9 +165,9 @@ app.post("/download", (req, res) => {
     "--restrict-filenames",
     "--progress",
     "--js-runtimes",
-    "node",
+    "deno,node",
     "--extractor-args",
-    "youtube:player_client=android,web,ios"
+    "youtube:player_client=android,web,tv,ios"
   ];
 
   // Check for cookies.txt in root directory or custom path
@@ -192,7 +192,7 @@ app.post("/download", (req, res) => {
   } else {
     args.push(
       "-f",
-      `bestvideo[height<=${selectedQuality}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${selectedQuality}]`,
+      `bestvideo[height<=${selectedQuality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${selectedQuality}]+bestaudio/best[height<=${selectedQuality}]/best`,
       "--merge-output-format",
       "mp4",
       "-o",
