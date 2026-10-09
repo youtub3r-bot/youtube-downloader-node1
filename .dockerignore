@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log
+downloads
+movi3s
+.git
+.gitignore
+.env
+Dockerfile
+docker-compose.yml
+.dockerignore

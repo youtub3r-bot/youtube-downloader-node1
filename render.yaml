@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: youtube-downloader
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_ENV
+        value: production

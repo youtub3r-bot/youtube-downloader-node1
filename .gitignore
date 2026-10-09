@@ -1,0 +1,6 @@
+node_modules/
+downloads/
+movi3s/
+.env
+*.log
+.DS_Store
