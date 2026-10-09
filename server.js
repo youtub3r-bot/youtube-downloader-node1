@@ -21,6 +21,23 @@ if (!fs.existsSync(DOWNLOAD_ROOT)) {
   fs.mkdirSync(DOWNLOAD_ROOT, { recursive: true });
 }
 
+// Auto-generate cookies.txt from environment variable if provided
+if (
+  process.env.YTDLP_COOKIES &&
+  !fs.existsSync(path.join(__dirname, "cookies.txt"))
+) {
+  try {
+    fs.writeFileSync(
+      path.join(__dirname, "cookies.txt"),
+      process.env.YTDLP_COOKIES,
+      "utf8"
+    );
+    console.log("Loaded YouTube cookies from YTDLP_COOKIES environment variable.");
+  } catch (err) {
+    console.error("Failed to write cookies.txt:", err.message);
+  }
+}
+
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -147,7 +164,18 @@ app.post("/download", (req, res) => {
     "--no-playlist",
     "--restrict-filenames",
     "--progress",
+    "--js-runtimes",
+    "node",
+    "--extractor-args",
+    "youtube:player_client=android,web,ios"
   ];
+
+  // Check for cookies.txt in root directory or custom path
+  const cookiesPath =
+    process.env.COOKIES_PATH || path.join(__dirname, "cookies.txt");
+  if (fs.existsSync(cookiesPath)) {
+    args.push("--cookies", cookiesPath);
+  }
 
   if (selectedFormat === "mp3") {
     args.push(
