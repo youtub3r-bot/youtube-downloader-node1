@@ -8,20 +8,23 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Canvas Confetti for Celebration Effect -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
   <style>
     :root {
-      --bg-gradient: radial-gradient(circle at 50% 0%, #171826 0%, #0c0d14 100%);
-      --card-bg: rgba(23, 24, 38, 0.92);
-      --card-border: rgba(255, 255, 255, 0.08);
+      --bg-gradient: radial-gradient(circle at 50% 0%, #161729 0%, #090a12 100%);
+      --card-bg: rgba(22, 23, 38, 0.88);
+      --card-border: rgba(255, 255, 255, 0.1);
       --accent: #ff0050;
       --accent-hover: #ff2b6d;
-      --accent-glow: rgba(255, 0, 80, 0.35);
-      --cyan-glow: rgba(6, 182, 212, 0.25);
+      --accent-glow: rgba(255, 0, 80, 0.45);
+      --cyan: #06b6d4;
+      --cyan-glow: rgba(6, 182, 212, 0.4);
       --text-main: #f3f4f6;
       --text-muted: #9ca3af;
-      --input-bg: rgba(14, 15, 24, 0.95);
+      --input-bg: rgba(13, 14, 23, 0.95);
       --input-border: rgba(255, 255, 255, 0.12);
-      --progress-bg: #27283c;
+      --progress-bg: #222336;
       --success: #10b981;
       --danger: #ef4444;
       --warning: #f59e0b;
@@ -43,11 +46,59 @@
       align-items: center;
       justify-content: center;
       padding: 30px 16px;
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    /* Animated Ambient Glow Blobs in Background */
+    .ambient-glow {
+      position: fixed;
+      width: 450px;
+      height: 450px;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.18;
+      pointer-events: none;
+      z-index: 0;
+      animation: floatGlow 12s ease-in-out infinite alternate;
+    }
+
+    .glow-1 {
+      top: -100px;
+      left: 10%;
+      background: #ff0050;
+    }
+
+    .glow-2 {
+      bottom: -100px;
+      right: 10%;
+      background: #06b6d4;
+      animation-delay: -6s;
+    }
+
+    @keyframes floatGlow {
+      0% { transform: translate(0, 0) scale(1); }
+      50% { transform: translate(30px, 40px) scale(1.15); }
+      100% { transform: translate(-20px, 20px) scale(0.95); }
     }
 
     .container {
       width: 100%;
       max-width: 620px;
+      position: relative;
+      z-index: 1;
+      animation: fadeInDown 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes fadeInDown {
+      from {
+        opacity: 0;
+        transform: translateY(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     .header {
@@ -76,28 +127,42 @@
       font-weight: 700;
       letter-spacing: 0.04em;
       text-transform: uppercase;
+      box-shadow: 0 0 12px rgba(255, 0, 80, 0.15);
+      transition: all 0.3s ease;
+    }
+
+    .pill-badge:hover {
+      transform: translateY(-2px) scale(1.05);
+      box-shadow: 0 4px 16px rgba(255, 0, 80, 0.35);
     }
 
     .pill-badge.cyan {
       background: rgba(6, 182, 212, 0.12);
       border-color: rgba(6, 182, 212, 0.3);
       color: #38bdf8;
+      box-shadow: 0 0 12px rgba(6, 182, 212, 0.15);
+    }
+
+    .pill-badge.cyan:hover {
+      box-shadow: 0 4px 16px rgba(6, 182, 212, 0.35);
     }
 
     .pill-badge.green {
       background: rgba(16, 185, 129, 0.12);
       border-color: rgba(16, 185, 129, 0.3);
       color: #34d399;
+      box-shadow: 0 0 12px rgba(16, 185, 129, 0.15);
     }
 
     .header h1 {
-      font-size: 2.3rem;
+      font-size: 2.35rem;
       font-weight: 800;
       letter-spacing: -0.02em;
       margin-bottom: 6px;
-      background: linear-gradient(135deg, #ffffff 60%, #ff4d79 100%);
+      background: linear-gradient(135deg, #ffffff 50%, #ff4d79 85%, #06b6d4 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
+      animation: shineGradient 6s ease-in-out infinite alternate;
     }
 
     .header p {
@@ -107,11 +172,32 @@
 
     .card {
       background: var(--card-bg);
-      backdrop-filter: blur(20px);
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
       border: 1px solid var(--card-border);
-      border-radius: 22px;
-      padding: 28px;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.65);
+      border-radius: 24px;
+      padding: 30px;
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, #ff0050, #06b6d4, transparent);
+      animation: headerShimmer 4s infinite ease-in-out;
+    }
+
+    @keyframes headerShimmer {
+      0% { left: -100%; }
+      50% { left: 100%; }
+      100% { left: 100%; }
     }
 
     .form-group {
@@ -138,34 +224,41 @@
       border: 1px solid var(--input-border);
       color: var(--text-main);
       padding: 14px 16px;
-      padding-right: 80px;
-      border-radius: 12px;
+      padding-right: 84px;
+      border-radius: 14px;
       font-size: 0.95rem;
       outline: none;
-      transition: all 0.2s ease;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .input-wrapper input:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-glow);
+      box-shadow: 0 0 0 4px var(--accent-glow), 0 0 25px rgba(255, 0, 80, 0.2);
+      transform: scale(1.005);
     }
 
     .paste-btn {
       position: absolute;
       right: 8px;
       background: rgba(255, 255, 255, 0.08);
-      border: none;
+      border: 1px solid rgba(255, 255, 255, 0.1);
       color: var(--text-main);
-      padding: 6px 12px;
-      border-radius: 8px;
-      font-size: 0.8rem;
+      padding: 7px 14px;
+      border-radius: 10px;
+      font-size: 0.82rem;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .paste-btn:hover {
-      background: rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.18);
+      transform: scale(1.05);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+
+    .paste-btn:active {
+      transform: scale(0.95);
     }
 
     /* Video Preview & Playlist Banner */
@@ -174,19 +267,32 @@
       gap: 14px;
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid var(--card-border);
-      border-radius: 14px;
+      border-radius: 16px;
       padding: 12px;
       margin-bottom: 18px;
       align-items: center;
-      transition: all 0.3s ease;
+      transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      animation: popIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes popIn {
+      0% { opacity: 0; transform: scale(0.94) translateY(6px); }
+      100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .video-preview:hover {
+      background: rgba(255, 255, 255, 0.06);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
     }
 
     .video-preview img {
       width: 110px;
       height: 64px;
       object-fit: cover;
-      border-radius: 8px;
+      border-radius: 10px;
       flex-shrink: 0;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
 
     .preview-details {
@@ -195,10 +301,10 @@
     }
 
     .preview-details h3 {
-      font-size: 0.9rem;
+      font-size: 0.92rem;
       font-weight: 600;
       margin-bottom: 4px;
-      line-height: 1.3;
+      line-height: 1.35;
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
@@ -218,35 +324,37 @@
       background: #f59e0b;
       color: #000;
       font-size: 0.72rem;
-      font-weight: 700;
+      font-weight: 800;
       padding: 2px 8px;
       border-radius: 6px;
       text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
 
     .loading-hint {
       display: none;
       font-size: 0.85rem;
-      color: #a1a1aa;
+      color: #38bdf8;
       margin-bottom: 16px;
       text-align: center;
-      animation: pulse 1.5s infinite;
+      animation: pulseGlow 1.4s infinite ease-in-out;
     }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 0.6; }
-      50% { opacity: 1; }
+    @keyframes pulseGlow {
+      0%, 100% { opacity: 0.5; transform: scale(0.99); }
+      50% { opacity: 1; transform: scale(1.01); }
     }
 
-    /* Format Tabs */
+    /* Format Tabs with Ripple Effect */
     .format-categories {
       display: flex;
       background: var(--input-bg);
       border: 1px solid var(--input-border);
-      border-radius: 12px;
-      padding: 4px;
+      border-radius: 14px;
+      padding: 5px;
       margin-bottom: 16px;
-      gap: 4px;
+      gap: 5px;
+      position: relative;
     }
 
     .format-btn {
@@ -254,22 +362,34 @@
       background: transparent;
       border: none;
       color: var(--text-muted);
-      padding: 9px 8px;
-      border-radius: 8px;
+      padding: 10px 8px;
+      border-radius: 10px;
       font-weight: 600;
       font-size: 0.85rem;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .format-btn:hover:not(.active) {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.06);
     }
 
     .format-btn.active {
       background: var(--accent);
       color: #fff;
-      box-shadow: 0 2px 10px var(--accent-glow);
+      box-shadow: 0 3px 14px var(--accent-glow);
+      transform: scale(1.02);
+    }
+
+    .format-btn:active {
+      transform: scale(0.96);
     }
 
     .options-grid {
@@ -284,28 +404,34 @@
       background: var(--input-bg);
       border: 1px solid var(--input-border);
       color: var(--text-main);
-      padding: 11px 14px;
-      border-radius: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
       font-size: 0.9rem;
       outline: none;
       cursor: pointer;
-      transition: border-color 0.2s;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .select-dropdown:hover {
+      border-color: rgba(255, 255, 255, 0.25);
     }
 
     .select-dropdown:focus {
       border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
     }
 
     /* Subtitle & Playlist Extra Config */
     .extra-settings {
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid var(--card-border);
-      border-radius: 12px;
+      border-radius: 14px;
       padding: 14px;
       margin-bottom: 20px;
       display: flex;
       flex-direction: column;
       gap: 12px;
+      transition: all 0.3s ease;
     }
 
     .checkbox-row {
@@ -318,26 +444,33 @@
     .checkbox-label {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 9px;
       font-size: 0.88rem;
       font-weight: 500;
       color: var(--text-main);
       user-select: none;
+      cursor: pointer;
     }
 
     .custom-check {
-      width: 18px;
-      height: 18px;
+      width: 19px;
+      height: 19px;
       accent-color: var(--accent);
       cursor: pointer;
+      transition: transform 0.2s ease;
+    }
+
+    .custom-check:checked {
+      transform: scale(1.15);
     }
 
     .sub-lang-row {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding-top: 8px;
-      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      padding-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      animation: popIn 0.3s ease;
     }
 
     .sub-lang-row label {
@@ -348,44 +481,72 @@
 
     .sub-select {
       flex: 1;
-      padding: 6px 10px;
+      padding: 7px 12px;
       font-size: 0.85rem;
     }
 
+    /* Special Pulsing Submit Button with Click Burst Ripple */
     .btn-submit {
       width: 100%;
-      background: var(--accent);
+      background: linear-gradient(135deg, #ff0050 0%, #ff2b6d 100%);
       color: white;
       border: none;
       padding: 15px;
-      border-radius: 12px;
-      font-size: 1.02rem;
+      border-radius: 14px;
+      font-size: 1.04rem;
       font-weight: 700;
       cursor: pointer;
-      transition: all 0.2s ease;
-      box-shadow: 0 4px 18px var(--accent-glow);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 6px 22px var(--accent-glow);
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 9px;
+      position: relative;
+      overflow: hidden;
     }
 
     .btn-submit:hover:not(:disabled) {
-      background: var(--accent-hover);
-      transform: translateY(-1px);
+      background: linear-gradient(135deg, #ff2b6d 0%, #ff4d79 100%);
+      transform: translateY(-2px) scale(1.01);
+      box-shadow: 0 10px 30px var(--accent-glow), 0 0 20px rgba(255, 0, 80, 0.4);
+    }
+
+    .btn-submit:active:not(:disabled) {
+      transform: translateY(1px) scale(0.98);
+      box-shadow: 0 2px 10px var(--accent-glow);
     }
 
     .btn-submit:disabled {
-      opacity: 0.6;
+      opacity: 0.65;
       cursor: not-allowed;
+      transform: none;
     }
 
-    /* Live Progress Section */
+    /* Click Ripple Effect Span */
+    .ripple-effect {
+      position: absolute;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.5);
+      transform: scale(0);
+      animation: rippleAnim 0.6s linear;
+      pointer-events: none;
+    }
+
+    @keyframes rippleAnim {
+      to {
+        transform: scale(4);
+        opacity: 0;
+      }
+    }
+
+    /* Live Progress Section with Glow Bar */
     .status-panel {
       display: none;
-      margin-top: 20px;
+      margin-top: 22px;
       padding-top: 20px;
       border-top: 1px solid var(--card-border);
+      animation: popIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .status-panel.active {
@@ -396,25 +557,35 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 0.88rem;
-      margin-bottom: 8px;
+      font-size: 0.9rem;
+      margin-bottom: 9px;
     }
 
     .progress-bar-bg {
       width: 100%;
-      height: 10px;
+      height: 12px;
       background: var(--progress-bg);
       border-radius: 9999px;
       overflow: hidden;
       margin-bottom: 12px;
+      position: relative;
+      border: 1px solid rgba(255, 255, 255, 0.05);
     }
 
     .progress-bar-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, #ff0050, #ff5e3a);
+      background: linear-gradient(90deg, #ff0050, #ff5e3a, #06b6d4);
+      background-size: 200% 100%;
       border-radius: 9999px;
-      transition: width 0.3s ease;
+      transition: width 0.35s ease;
+      animation: gradientMove 2s linear infinite;
+      box-shadow: 0 0 14px rgba(255, 0, 80, 0.5);
+    }
+
+    @keyframes gradientMove {
+      0% { background-position: 100% 0; }
+      100% { background-position: 0 0; }
     }
 
     .action-row {
@@ -425,22 +596,37 @@
 
     .btn-action {
       flex: 1;
-      padding: 11px;
-      border-radius: 10px;
-      font-size: 0.92rem;
-      font-weight: 600;
+      padding: 12px;
+      border-radius: 12px;
+      font-size: 0.94rem;
+      font-weight: 700;
       border: none;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 8px;
       text-decoration: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+      overflow: hidden;
     }
 
     .btn-download {
-      background: var(--success);
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
       color: white;
+      box-shadow: 0 4px 18px rgba(16, 185, 129, 0.4);
+      animation: bouncePulse 2s infinite ease-in-out;
+    }
+
+    @keyframes bouncePulse {
+      0%, 100% { transform: scale(1); box-shadow: 0 4px 18px rgba(16, 185, 129, 0.4); }
+      50% { transform: scale(1.02); box-shadow: 0 8px 25px rgba(16, 185, 129, 0.6); }
+    }
+
+    .btn-download:hover {
+      transform: translateY(-2px) scale(1.03);
+      box-shadow: 0 8px 25px rgba(16, 185, 129, 0.6);
     }
 
     .btn-cancel {
@@ -451,19 +637,27 @@
 
     .btn-cancel:hover {
       background: rgba(239, 68, 68, 0.25);
+      transform: translateY(-1px);
     }
 
     .alert {
       display: none;
       padding: 12px 16px;
-      border-radius: 10px;
+      border-radius: 12px;
       font-size: 0.88rem;
       margin-top: 16px;
+      animation: shake 0.4s ease;
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-6px); }
+      40%, 80% { transform: translateX(6px); }
     }
 
     .alert-error {
-      background: rgba(239, 68, 68, 0.12);
-      border: 1px solid rgba(239, 68, 68, 0.3);
+      background: rgba(239, 68, 68, 0.14);
+      border: 1px solid rgba(239, 68, 68, 0.35);
       color: #fca5a5;
     }
 
@@ -471,11 +665,17 @@
       margin-top: 24px;
       background: rgba(6, 182, 212, 0.05);
       border: 1px solid rgba(6, 182, 212, 0.2);
-      border-radius: 14px;
-      padding: 14px;
+      border-radius: 16px;
+      padding: 14px 16px;
       font-size: 0.82rem;
       color: #cbd5e1;
       line-height: 1.5;
+      transition: all 0.3s ease;
+    }
+
+    .enhancement-info:hover {
+      background: rgba(6, 182, 212, 0.08);
+      border-color: rgba(6, 182, 212, 0.35);
     }
 
     .enhancement-info strong {
@@ -485,24 +685,28 @@
     .footer {
       text-align: center;
       margin-top: 24px;
-      font-size: 0.8rem;
+      font-size: 0.82rem;
       color: var(--text-muted);
     }
   </style>
 </head>
 <body>
+  <!-- Ambient background glow lights -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+
   <div class="container">
     <div class="header">
       <div class="badges-row">
-        <span class="pill-badge">4K Ultra HD</span>
-        <span class="pill-badge cyan">2K Quad HD</span>
-        <span class="pill-badge green">FFmpeg Studio</span>
+        <span class="pill-badge">✨ 4K Ultra HD</span>
+        <span class="pill-badge cyan">⚡ 2K Quad HD</span>
+        <span class="pill-badge green">🚀 FFmpeg Studio</span>
       </div>
       <h1>YouTube Downloader</h1>
       <p>Download Videos up to 4K, Studio Audio (MP3/WAV), Subtitles & Playlists</p>
     </div>
 
-    <div class="card">
+    <div class="card" id="mainCard">
       <form id="downloadForm">
         <div class="form-group">
           <label for="videoUrl">Video or Playlist URL</label>
@@ -514,7 +718,7 @@
               required 
               autocomplete="off"
             />
-            <button type="button" class="paste-btn" id="pasteBtn">Paste</button>
+            <button type="button" class="paste-btn" id="pasteBtn">📋 Paste</button>
           </div>
         </div>
 
@@ -538,34 +742,34 @@
         <!-- Format Category Tabs -->
         <div class="format-categories">
           <button type="button" class="format-btn active" data-format="mp4">
-            🎬 MP4 (Video)
+            🎬 MP4
           </button>
           <button type="button" class="format-btn" data-format="mkv">
-            📦 MKV (Video)
+            📦 MKV
           </button>
           <button type="button" class="format-btn" data-format="mp3">
-            🎵 MP3 (Audio)
+            🎵 MP3
           </button>
           <button type="button" class="format-btn" data-format="wav">
-            🎧 WAV (Lossless)
+            🎧 WAV
           </button>
           <button type="button" class="format-btn" data-format="srt">
-            📝 Subtitles (.srt)
+            📝 Subtitles
           </button>
         </div>
 
-        <!-- Dynamic Quality & Format Settings -->
+        <!-- Dynamic Quality & Container Settings -->
         <div class="options-grid">
           <div id="qualityCol">
-            <label for="qualitySelect" id="qualityLabel">Video Quality</label>
+            <label for="qualitySelect" id="qualityLabel">Video Resolution</label>
             <select id="qualitySelect" class="select-dropdown"></select>
           </div>
 
           <div id="extraCol">
-            <label for="containerLabel">Container / Preset</label>
+            <label for="containerSelect">Container Mode</label>
             <select id="containerSelect" class="select-dropdown">
               <option value="default">Default / Best Compatible</option>
-              <option value="fast">Fast Direct Download</option>
+              <option value="fast">Direct Stream Extraction</option>
             </select>
           </div>
         </div>
@@ -599,7 +803,7 @@
         </div>
 
         <button type="submit" class="btn-submit" id="submitBtn">
-          <span>Start Download</span>
+          <span>⚡ Start Download</span>
         </button>
       </form>
 
@@ -609,7 +813,7 @@
       <div class="status-panel" id="statusPanel">
         <div class="progress-header">
           <span id="statusText">Processing...</span>
-          <span id="progressPercent">0%</span>
+          <span id="progressPercent" style="font-weight: 700; color: #ff0050;">0%</span>
         </div>
         <div class="progress-bar-bg">
           <div class="progress-bar-fill" id="progressBar"></div>
@@ -617,7 +821,9 @@
         <div id="fileInfo" style="font-size: 0.85rem; color: var(--text-muted); word-break: break-all; margin-bottom: 8px;"></div>
         <div class="action-row" id="actionRow">
           <button type="button" class="btn-action btn-cancel" id="cancelBtn">Cancel</button>
-          <a class="btn-action btn-download" id="downloadFileBtn" style="display: none;" download>Save File</a>
+          <a class="btn-action btn-download" id="downloadFileBtn" style="display: none;" download>
+            💾 Save File
+          </a>
         </div>
       </div>
 
@@ -634,6 +840,32 @@
   </div>
 
   <script>
+    // Ripple Click Animation Function for Interactive Touch & Click
+    function createRipple(event) {
+      const button = event.currentTarget;
+      const circle = document.createElement("span");
+      const diameter = Math.max(button.clientWidth, button.clientHeight);
+      const radius = diameter / 2;
+
+      const rect = button.getBoundingClientRect();
+      circle.style.width = circle.style.height = `${diameter}px`;
+      circle.style.left = `${event.clientX - rect.left - radius}px`;
+      circle.style.top = `${event.clientY - rect.top - radius}px`;
+      circle.classList.add("ripple-effect");
+
+      const existingRipple = button.getElementsByClassName("ripple-effect")[0];
+      if (existingRipple) {
+        existingRipple.remove();
+      }
+
+      button.appendChild(circle);
+    }
+
+    // Attach Ripple to buttons
+    document.querySelectorAll(".btn-submit, .format-btn, .btn-action, .paste-btn").forEach(btn => {
+      btn.addEventListener("click", createRipple);
+    });
+
     const defaultVideoQualities = [
       { label: '2160p (4K Ultra HD)', value: '2160' },
       { label: '1440p (2K Quad HD)', value: '1440' },
@@ -886,7 +1118,7 @@
       }
 
       submitBtn.disabled = true;
-      submitBtn.innerHTML = '<span>Starting job...</span>';
+      submitBtn.innerHTML = '<span>⚡ Initializing...</span>';
       statusPanel.classList.add('active');
       statusText.textContent = isPlaylistMode ? 'Initializing playlist archive...' : 'Initializing download...';
       progressPercent.textContent = '0%';
@@ -919,10 +1151,35 @@
       } catch (err) {
         showError(err.message);
         submitBtn.disabled = false;
-        submitBtn.innerHTML = '<span>Start Download</span>';
+        submitBtn.innerHTML = '<span>⚡ Start Download</span>';
         statusPanel.classList.remove('active');
       }
     });
+
+    // Celebration Confetti Cannon Trigger
+    function triggerCelebration() {
+      if (typeof confetti === 'function') {
+        confetti({
+          particleCount: 100,
+          spread: 70,
+          origin: { y: 0.6 }
+        });
+        setTimeout(() => {
+          confetti({
+            particleCount: 50,
+            angle: 60,
+            spread: 55,
+            origin: { x: 0 }
+          });
+          confetti({
+            particleCount: 50,
+            angle: 120,
+            spread: 55,
+            origin: { x: 1 }
+          });
+        }, 250);
+      }
+    }
 
     function startPolling(jobId) {
       if (pollInterval) clearInterval(pollInterval);
@@ -934,7 +1191,7 @@
             clearInterval(pollInterval);
             showError('Unable to fetch job status.');
             submitBtn.disabled = false;
-            submitBtn.innerHTML = '<span>Start Download</span>';
+            submitBtn.innerHTML = '<span>⚡ Start Download</span>';
             return;
           }
 
@@ -950,30 +1207,33 @@
             }
           } else if (data.status === 'completed') {
             clearInterval(pollInterval);
-            statusText.textContent = 'Download & Processing Complete!';
+            statusText.textContent = '🎉 Download & Processing Complete!';
             progressPercent.textContent = '100%';
             progressBar.style.width = '100%';
             submitBtn.disabled = false;
-            submitBtn.innerHTML = '<span>Start Download</span>';
+            submitBtn.innerHTML = '<span>⚡ Start Download</span>';
             cancelBtn.style.display = 'none';
             downloadFileBtn.style.display = 'inline-flex';
             downloadFileBtn.href = data.downloadUrl;
-            downloadFileBtn.textContent = `Save ${data.filename || 'File'}`;
+            downloadFileBtn.textContent = `💾 Save ${data.filename || 'File'}`;
             if (data.filename) {
               fileInfo.textContent = `File ready: ${data.filename}`;
             }
+
+            // Launch Confetti Celebration!
+            triggerCelebration();
           } else if (data.status === 'error') {
             clearInterval(pollInterval);
             showError(data.error || 'Download failed.');
             statusPanel.classList.remove('active');
             submitBtn.disabled = false;
-            submitBtn.innerHTML = '<span>Start Download</span>';
+            submitBtn.innerHTML = '<span>⚡ Start Download</span>';
           } else if (data.status === 'cancelled') {
             clearInterval(pollInterval);
             showError('Download was cancelled.');
             statusPanel.classList.remove('active');
             submitBtn.disabled = false;
-            submitBtn.innerHTML = '<span>Start Download</span>';
+            submitBtn.innerHTML = '<span>⚡ Start Download</span>';
           }
         } catch (err) {
           console.error(err);
@@ -988,7 +1248,7 @@
         if (pollInterval) clearInterval(pollInterval);
         statusPanel.classList.remove('active');
         submitBtn.disabled = false;
-        submitBtn.innerHTML = '<span>Start Download</span>';
+        submitBtn.innerHTML = '<span>⚡ Start Download</span>';
       } catch (err) {
         console.error(err);
       }
