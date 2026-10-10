@@ -255,6 +255,147 @@ print("Done!")
   }
 });
 
+app.post("/info", (req, res) => {
+  const { url } = req.body;
+
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "Please enter a YouTube URL." });
+  }
+
+  if (!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) {
+    return res.status(400).json({ error: "Please enter a valid YouTube URL." });
+  }
+
+  const args = [
+    "--dump-single-json",
+    "--no-playlist",
+    "--no-warnings",
+    "--remote-components",
+    "ejs:github",
+    "--js-runtimes",
+    "node",
+    "--geo-bypass",
+    "--geo-bypass-country",
+    process.env.GEO_BYPASS_COUNTRY || "IN",
+  ];
+
+  if (process.env.YTDLP_PROXY || process.env.HTTP_PROXY) {
+    args.push("--proxy", process.env.YTDLP_PROXY || process.env.HTTP_PROXY);
+  }
+
+  const cookiesPath =
+    process.env.COOKIES_PATH || path.join(__dirname, "cookies.txt");
+  if (fs.existsSync(cookiesPath)) {
+    args.push("--cookies", cookiesPath);
+  }
+
+  args.push(url);
+
+  const child = spawn(YTDLP, args, {
+    shell: false,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      TMPDIR: path.join(__dirname, "tmp"),
+      PATH: `/opt/alt/python312/bin:/opt/alt/python311/bin:${process.env.PATH || ""}`,
+    },
+  });
+
+  let stdout = "";
+  let stderr = "";
+
+  child.stdout.on("data", (data) => {
+    stdout += data.toString();
+  });
+
+  child.stderr.on("data", (data) => {
+    stderr += data.toString();
+  });
+
+  child.on("close", (code) => {
+    if (code !== 0 || !stdout.trim()) {
+      return res.status(500).json({
+        error: stderr.trim() || "Failed to fetch video information.",
+      });
+    }
+
+    try {
+      const data = JSON.parse(stdout);
+      const heights = new Set();
+      if (Array.isArray(data.formats)) {
+        for (const f of data.formats) {
+          if (typeof f.height === "number" && f.height > 0) {
+            heights.add(f.height);
+          }
+        }
+      }
+
+      const standardMap = [
+        { val: 2160, label: "2160p (4K Ultra HD)" },
+        { val: 1440, label: "1440p (2K Quad HD)" },
+        { val: 1080, label: "1080p (Full HD)" },
+        { val: 720, label: "720p (HD)" },
+        { val: 480, label: "480p (SD)" },
+        { val: 360, label: "360p (Medium)" },
+        { val: 240, label: "240p (Low)" },
+        { val: 144, label: "144p (Data Saver)" },
+      ];
+
+      const maxHeight = Math.max(0, ...Array.from(heights));
+      const videoQualities = standardMap
+        .filter(
+          (item) => heights.has(item.val) || (item.val <= maxHeight && item.val >= 360)
+        )
+        .map((item) => ({
+          label: item.label,
+          value: String(item.val),
+          selected: item.val === Math.min(720, maxHeight),
+        }));
+
+      if (videoQualities.length === 0) {
+        videoQualities.push(
+          { label: "720p (HD)", value: "720", selected: true },
+          { label: "480p (SD)", value: "480" },
+          { label: "360p (Medium)", value: "360" }
+        );
+      }
+
+      const audioQualities = [
+        { label: "320 kbps (High Quality)", value: "320" },
+        { label: "256 kbps (Very Good)", value: "256" },
+        { label: "192 kbps (Standard)", value: "192", selected: true },
+        { label: "128 kbps (Fast)", value: "128" },
+      ];
+
+      res.json({
+        ok: true,
+        title: data.title || "Unknown Title",
+        thumbnail:
+          data.thumbnail ||
+          (data.thumbnails && data.thumbnails.length
+            ? data.thumbnails[data.thumbnails.length - 1].url
+            : null),
+        duration:
+          data.duration_string ||
+          (data.duration
+            ? `${Math.floor(data.duration / 60)}:${String(
+                data.duration % 60
+              ).padStart(2, "0")}`
+            : null),
+        channel: data.uploader || data.channel || "",
+        videoQualities,
+        audioQualities,
+      });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to parse video metadata." });
+    }
+  });
+
+  child.on("error", (err) => {
+    res.status(500).json({ error: err.message });
+  });
+});
+
 app.post("/download", (req, res) => {
   const { url, format, quality } = req.body;
 
@@ -272,8 +413,8 @@ app.post("/download", (req, res) => {
 
   const selectedFormat = format === "mp4" ? "mp4" : "mp3";
 
-  const allowedMP3 = ["128", "192", "256", "320"];
-  const allowedMP4 = ["360", "480", "720", "1080"];
+  const allowedMP3 = ["64", "128", "192", "256", "320"];
+  const allowedMP4 = ["144", "240", "360", "480", "720", "1080", "1440", "2160"];
 
   let selectedQuality;
 
@@ -299,12 +440,10 @@ app.post("/download", (req, res) => {
     "--no-playlist",
     "--restrict-filenames",
     "--progress",
-    "--js-runtimes",
-    "deno",
+    "--remote-components",
+    "ejs:github",
     "--js-runtimes",
     "node",
-    "--extractor-args",
-    "youtube:player_client=android,web,tv,ios",
     "--geo-bypass",
     "--geo-bypass-country",
     process.env.GEO_BYPASS_COUNTRY || "IN",

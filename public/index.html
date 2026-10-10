@@ -223,6 +223,49 @@
       cursor: not-allowed;
     }
 
+    /* Video Preview */
+    .video-preview {
+      display: flex;
+      gap: 14px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 12px;
+      margin-bottom: 20px;
+      align-items: center;
+    }
+
+    .video-preview img {
+      width: 110px;
+      height: 64px;
+      object-fit: cover;
+      border-radius: 8px;
+      flex-shrink: 0;
+    }
+
+    .preview-details {
+      overflow: hidden;
+      flex: 1;
+    }
+
+    .preview-details h3 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .preview-meta {
+      display: flex;
+      gap: 10px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
     /* Status & Progress Section */
     .status-panel {
       display: none;
@@ -347,6 +390,21 @@
           </div>
         </div>
 
+        <!-- Dynamic Video Preview -->
+        <div id="videoPreview" class="video-preview" style="display: none;">
+          <img id="previewThumb" src="" alt="Thumbnail" />
+          <div class="preview-details">
+            <h3 id="previewTitle"></h3>
+            <div class="preview-meta">
+              <span id="previewChannel"></span>
+              <span id="previewDuration"></span>
+            </div>
+          </div>
+        </div>
+        <div id="loadingInfo" style="display: none; font-size: 0.85rem; color: #a1a1aa; margin-bottom: 16px; text-align: center;">
+          Detecting available qualities...
+        </div>
+
         <div class="options-grid">
           <div>
             <label>Format</label>
@@ -429,9 +487,15 @@
     const cancelBtn = document.getElementById('cancelBtn');
     const downloadFileBtn = document.getElementById('downloadFileBtn');
 
+    let currentVideoQualities = qualities.mp4;
+    let currentAudioQualities = qualities.mp3;
+    let lastFetchedUrl = '';
+    let debounceTimer = null;
+
     function updateQualityDropdown(format) {
       qualitySelect.innerHTML = '';
-      qualities[format].forEach(opt => {
+      const list = format === 'mp4' ? currentVideoQualities : currentAudioQualities;
+      list.forEach(opt => {
         const option = document.createElement('option');
         option.value = opt.value;
         option.textContent = opt.label;
@@ -451,11 +515,73 @@
       });
     });
 
+    async function fetchVideoInfo(url) {
+      if (!url || !/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) {
+        document.getElementById('videoPreview').style.display = 'none';
+        currentVideoQualities = qualities.mp4;
+        currentAudioQualities = qualities.mp3;
+        updateQualityDropdown(currentFormat);
+        return;
+      }
+      if (url === lastFetchedUrl) return;
+      lastFetchedUrl = url;
+
+      const loadingInfo = document.getElementById('loadingInfo');
+      const videoPreview = document.getElementById('videoPreview');
+      const previewThumb = document.getElementById('previewThumb');
+      const previewTitle = document.getElementById('previewTitle');
+      const previewChannel = document.getElementById('previewChannel');
+      const previewDuration = document.getElementById('previewDuration');
+
+      loadingInfo.style.display = 'block';
+
+      try {
+        const res = await fetch('info', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        if (!res.ok) throw new Error('Info request failed');
+        const data = await res.json();
+
+        if (data.ok) {
+          if (Array.isArray(data.videoQualities) && data.videoQualities.length > 0) {
+            currentVideoQualities = data.videoQualities;
+          }
+          if (Array.isArray(data.audioQualities) && data.audioQualities.length > 0) {
+            currentAudioQualities = data.audioQualities;
+          }
+
+          if (data.thumbnail) {
+            previewThumb.src = data.thumbnail;
+            previewTitle.textContent = data.title;
+            previewChannel.textContent = data.channel || '';
+            previewDuration.textContent = data.duration ? `⏱ ${data.duration}` : '';
+            videoPreview.style.display = 'flex';
+          }
+
+          updateQualityDropdown(currentFormat);
+        }
+      } catch (err) {
+        console.warn('Fallback to standard qualities:', err.message);
+      } finally {
+        loadingInfo.style.display = 'none';
+      }
+    }
+
+    videoUrlInput.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        fetchVideoInfo(videoUrlInput.value.trim());
+      }, 500);
+    });
+
     pasteBtn.addEventListener('click', async () => {
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
           videoUrlInput.value = text.trim();
+          fetchVideoInfo(text.trim());
         }
       } catch (err) {
         videoUrlInput.focus();
