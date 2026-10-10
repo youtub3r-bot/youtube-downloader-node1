@@ -2,6 +2,7 @@ const express = require("express");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const archiver = require("archiver");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -91,6 +92,8 @@ function saveJob(job) {
       error: job.error,
       folder: job.folder,
       createdAt: job.createdAt,
+      isPlaylist: !!job.isPlaylist,
+      itemCount: job.itemCount || 1,
     };
     fs.writeFileSync(metaPath, JSON.stringify(data), "utf8");
   } catch {}
@@ -130,6 +133,8 @@ function createJob() {
     process: null,
     folder,
     createdAt: Date.now(),
+    isPlaylist: false,
+    itemCount: 1,
   };
 
   jobs.set(id, job);
@@ -138,16 +143,41 @@ function createJob() {
   return job;
 }
 
+function findDownloadedFiles(folder) {
+  if (!fs.existsSync(folder)) return [];
+  const entries = fs.readdirSync(folder);
+  return entries.filter(
+    (f) =>
+      !f.endsWith(".part") &&
+      !f.endsWith(".ytdl") &&
+      f !== "job.json" &&
+      !f.endsWith(".temp")
+  );
+}
+
 function findDownloadedFile(folder, format) {
   if (!fs.existsSync(folder)) return null;
 
-  const files = fs.readdirSync(folder);
+  const files = fs.readdirSync(folder).filter((f) => f !== "job.json");
 
-  const extension = format === "mp3" ? ".mp3" : ".mp4";
+  // Format mapping
+  let targetExt = ".mp4";
+  if (format === "mp3") targetExt = ".mp3";
+  else if (format === "m4a") targetExt = ".m4a";
+  else if (format === "wav") targetExt = ".wav";
+  else if (format === "mkv") targetExt = ".mkv";
+  else if (format === "srt") targetExt = ".srt";
+  else if (format === "vtt") targetExt = ".vtt";
 
-  const file = files.find((f) => f.toLowerCase().endsWith(extension));
+  // First priority: direct match
+  const directMatch = files.find((f) => f.toLowerCase().endsWith(targetExt));
+  if (directMatch) return directMatch;
 
-  return file || null;
+  // Fallback to any media file
+  const mediaFile = files.find((f) =>
+    /\.(mp4|mkv|webm|mp3|m4a|wav|opus|flac|srt|vtt|zip)$/i.test(f)
+  );
+  return mediaFile || null;
 }
 
 function cleanupOldJobs() {
@@ -217,44 +247,7 @@ app.get("/diag", (req, res) => {
   });
 });
 
-app.get("/setup-ffmpeg", (req, res) => {
-  const { execSync } = require("child_process");
-  try {
-    const pyScript = `import urllib.request, tarfile, os, shutil
-print("Downloading ffmpeg...")
-urllib.request.urlretrieve("https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz", "f.tar.xz")
-print("Extracting...")
-with tarfile.open("f.tar.xz") as t:
-    for m in t.getmembers():
-        if m.name.endswith("/ffmpeg") or m.name.endswith("/ffprobe"):
-            base = os.path.basename(m.name)
-            f = t.extractfile(m)
-            with open(base, "wb") as out:
-                shutil.copyfileobj(f, out)
-            os.chmod(base, 0o755)
-os.remove("f.tar.xz")
-print("Done!")
-`;
-    fs.writeFileSync(path.join(__dirname, "setup_ffmpeg.py"), pyScript);
-    const output = execSync("/opt/alt/python312/bin/python3 setup_ffmpeg.py", {
-      cwd: __dirname,
-      encoding: "utf8",
-      timeout: 180000,
-    });
-    try {
-      fs.unlinkSync(path.join(__dirname, "setup_ffmpeg.py"));
-    } catch {}
-    res.json({
-      ok: true,
-      output,
-      ffmpeg: fs.existsSync(path.join(__dirname, "ffmpeg")),
-      ffprobe: fs.existsSync(path.join(__dirname, "ffprobe")),
-    });
-  } catch (err) {
-    res.json({ ok: false, error: err.message });
-  }
-});
-
+// Video & Playlist Info Extraction
 app.post("/info", (req, res) => {
   const { url } = req.body;
 
@@ -266,9 +259,10 @@ app.post("/info", (req, res) => {
     return res.status(400).json({ error: "Please enter a valid YouTube URL." });
   }
 
+  const isPlaylist = url.includes("list=");
+
   const args = [
     "--dump-single-json",
-    "--no-playlist",
     "--no-warnings",
     "--remote-components",
     "ejs:github",
@@ -278,6 +272,13 @@ app.post("/info", (req, res) => {
     "--geo-bypass-country",
     process.env.GEO_BYPASS_COUNTRY || "IN",
   ];
+
+  if (isPlaylist) {
+    // Limit playlist extraction to first 30 entries for speed and responsiveness
+    args.push("--playlist-end", "30", "--flat-playlist");
+  } else {
+    args.push("--no-playlist");
+  }
 
   if (process.env.YTDLP_PROXY || process.env.HTTP_PROXY) {
     args.push("--proxy", process.env.YTDLP_PROXY || process.env.HTTP_PROXY);
@@ -315,12 +316,46 @@ app.post("/info", (req, res) => {
   child.on("close", (code) => {
     if (code !== 0 || !stdout.trim()) {
       return res.status(500).json({
-        error: stderr.trim() || "Failed to fetch video information.",
+        error: stderr.trim() || "Failed to fetch video/playlist information.",
       });
     }
 
     try {
       const data = JSON.parse(stdout);
+
+      // Handle Playlist detection
+      if (data._type === "playlist" || Array.isArray(data.entries)) {
+        const entries = (data.entries || []).filter(Boolean);
+        const firstEntry = entries[0] || {};
+        return res.json({
+          ok: true,
+          isPlaylist: true,
+          title: data.title || "YouTube Playlist",
+          thumbnail:
+            data.thumbnails && data.thumbnails.length
+              ? data.thumbnails[data.thumbnails.length - 1].url
+              : firstEntry.thumbnail ||
+                (firstEntry.thumbnails && firstEntry.thumbnails.length
+                  ? firstEntry.thumbnails[firstEntry.thumbnails.length - 1].url
+                  : null),
+          channel: data.uploader || data.channel || firstEntry.uploader || "",
+          playlistCount: entries.length,
+          videoQualities: [
+            { label: "1080p Full HD (Max)", value: "1080" },
+            { label: "720p HD (Fast & Optimal)", value: "720", selected: true },
+            { label: "480p SD", value: "480" },
+            { label: "360p Data Saver", value: "360" },
+          ],
+          audioQualities: [
+            { label: "320 kbps (High Quality)", value: "320" },
+            { label: "192 kbps (Standard)", value: "192", selected: true },
+            { label: "128 kbps (Fast)", value: "128" },
+          ],
+          subtitles: [{ code: "en", label: "English" }, { code: "all", label: "All Available" }],
+        });
+      }
+
+      // Single Video Parsing
       const heights = new Set();
       if (Array.isArray(data.formats)) {
         for (const f of data.formats) {
@@ -349,11 +384,12 @@ app.post("/info", (req, res) => {
         .map((item) => ({
           label: item.label,
           value: String(item.val),
-          selected: item.val === Math.min(720, maxHeight),
+          selected: item.val === Math.min(1080, maxHeight > 0 ? maxHeight : 720),
         }));
 
       if (videoQualities.length === 0) {
         videoQualities.push(
+          { label: "1080p (Full HD)", value: "1080" },
           { label: "720p (HD)", value: "720", selected: true },
           { label: "480p (SD)", value: "480" },
           { label: "360p (Medium)", value: "360" }
@@ -361,14 +397,36 @@ app.post("/info", (req, res) => {
       }
 
       const audioQualities = [
-        { label: "320 kbps (High Quality)", value: "320" },
-        { label: "256 kbps (Very Good)", value: "256" },
-        { label: "192 kbps (Standard)", value: "192", selected: true },
-        { label: "128 kbps (Fast)", value: "128" },
+        { label: "320 kbps (Studio Quality)", value: "320" },
+        { label: "256 kbps (High Quality)", value: "256" },
+        { label: "192 kbps (Standard MP3)", value: "192", selected: true },
+        { label: "128 kbps (Fast Download)", value: "128" },
       ];
+
+      // Extract available subtitles
+      const availableSubtitles = [];
+      const subKeys = new Set([
+        ...Object.keys(data.subtitles || {}),
+        ...Object.keys(data.automatic_captions || {}),
+      ]);
+      if (subKeys.has("en") || subKeys.has("en-orig") || subKeys.has("en-US")) {
+        availableSubtitles.push({ code: "en", label: "English" });
+      }
+      if (subKeys.has("hi")) {
+        availableSubtitles.push({ code: "hi", label: "Hindi (हिन्दी)" });
+      }
+      if (subKeys.has("es")) {
+        availableSubtitles.push({ code: "es", label: "Spanish" });
+      }
+      if (subKeys.size > 0 && availableSubtitles.length === 0) {
+        const first = Array.from(subKeys)[0];
+        availableSubtitles.push({ code: first, label: first.toUpperCase() });
+      }
+      availableSubtitles.push({ code: "all", label: "All Languages (.srt)" });
 
       res.json({
         ok: true,
+        isPlaylist: false,
         title: data.title || "Unknown Title",
         thumbnail:
           data.thumbnail ||
@@ -385,6 +443,8 @@ app.post("/info", (req, res) => {
         channel: data.uploader || data.channel || "",
         videoQualities,
         audioQualities,
+        subtitles: availableSubtitles,
+        hasSubtitles: subKeys.size > 0,
       });
     } catch (err) {
       res.status(500).json({ error: "Failed to parse video metadata." });
@@ -396,8 +456,16 @@ app.post("/info", (req, res) => {
   });
 });
 
+// Download Endpoint with Subtitle, Audio Format & Playlist ZIP bundling
 app.post("/download", (req, res) => {
-  const { url, format, quality } = req.body;
+  const {
+    url,
+    format,
+    quality,
+    includeSubs,
+    subLang,
+    playlistMax,
+  } = req.body;
 
   if (!url || typeof url !== "string") {
     return res.status(400).json({
@@ -411,33 +479,43 @@ app.post("/download", (req, res) => {
     });
   }
 
-  const selectedFormat = format === "mp4" ? "mp4" : "mp3";
+  // Supported formats: mp4, mkv, mp3, m4a, wav, srt
+  const validFormats = ["mp4", "mkv", "mp3", "m4a", "wav", "srt"];
+  const selectedFormat = validFormats.includes(format) ? format : "mp4";
 
-  const allowedMP3 = ["64", "128", "192", "256", "320"];
-  const allowedMP4 = ["144", "240", "360", "480", "720", "1080", "1440", "2160"];
+  const isAudio = ["mp3", "m4a", "wav"].includes(selectedFormat);
+  const isVideo = ["mp4", "mkv"].includes(selectedFormat);
+  const isSubOnly = selectedFormat === "srt";
+
+  const allowedAudioQualities = ["64", "128", "192", "256", "320"];
+  const allowedVideoQualities = ["144", "240", "360", "480", "720", "1080", "1440", "2160"];
 
   let selectedQuality;
-
-  if (selectedFormat === "mp3") {
-    selectedQuality = allowedMP3.includes(String(quality))
+  if (isAudio) {
+    selectedQuality = allowedAudioQualities.includes(String(quality))
       ? String(quality)
       : "192";
-  } else {
-    selectedQuality = allowedMP4.includes(String(quality))
+  } else if (isVideo) {
+    selectedQuality = allowedVideoQualities.includes(String(quality))
       ? String(quality)
-      : "720";
+      : "1080";
+  } else {
+    selectedQuality = "auto";
   }
 
-  const job = createJob();
+  const isPlaylist = url.includes("list=");
+  const maxPlaylistItems = Math.min(Math.max(parseInt(playlistMax) || 10, 1), 30);
 
-  const outputTemplate = path.join(
-    job.folder,
-    "%(title)s.%(ext)s"
-  );
+  const job = createJob();
+  job.isPlaylist = isPlaylist;
+
+  // Filename template
+  const outputTemplate = isPlaylist
+    ? path.join(job.folder, "%(playlist_index)s - %(title)s.%(ext)s")
+    : path.join(job.folder, "%(title)s.%(ext)s");
 
   let args = [
     "--newline",
-    "--no-playlist",
     "--restrict-filenames",
     "--progress",
     "--remote-components",
@@ -449,12 +527,18 @@ app.post("/download", (req, res) => {
     process.env.GEO_BYPASS_COUNTRY || "IN",
   ];
 
+  if (isPlaylist) {
+    args.push("--yes-playlist", "--playlist-end", String(maxPlaylistItems));
+  } else {
+    args.push("--no-playlist");
+  }
+
   // Optional proxy support
   if (process.env.YTDLP_PROXY || process.env.HTTP_PROXY) {
     args.push("--proxy", process.env.YTDLP_PROXY || process.env.HTTP_PROXY);
   }
 
-  // Check for bundled ffmpeg
+  // Bundled ffmpeg support
   const bundledFfmpeg = path.join(__dirname, "ffmpeg");
   if (fs.existsSync(bundledFfmpeg)) {
     try {
@@ -463,34 +547,77 @@ app.post("/download", (req, res) => {
     args.push("--ffmpeg-location", bundledFfmpeg);
   }
 
-  // Check for cookies.txt in root directory or custom path
+  // Cookies support
   const cookiesPath =
     process.env.COOKIES_PATH || path.join(__dirname, "cookies.txt");
   if (fs.existsSync(cookiesPath)) {
     args.push("--cookies", cookiesPath);
   }
 
-  if (selectedFormat === "mp3") {
+  // Subtitle options
+  const wantsSubs = includeSubs === true || includeSubs === "true";
+  const language = subLang || "en";
+
+  if (isSubOnly) {
+    // Only download subtitles (.srt)
     args.push(
-      "-f",
-      "bestaudio/best",
-      "-x",
-      "--audio-format",
-      "mp3",
-      "--audio-quality",
-      `${selectedQuality}K`,
+      "--skip-download",
+      "--write-subs",
+      "--write-auto-subs",
+      "--sub-langs",
+      language === "all" ? "all" : `${language},en.*`,
+      "--convert-subs",
+      "srt",
       "-o",
       outputTemplate
     );
+  } else if (isAudio) {
+    // Audio formats: mp3, m4a, wav
+    args.push("-f", "bestaudio/best", "-x");
+    if (selectedFormat === "mp3") {
+      args.push(
+        "--audio-format",
+        "mp3",
+        "--audio-quality",
+        `${selectedQuality}K`
+      );
+    } else if (selectedFormat === "m4a") {
+      args.push("--audio-format", "m4a");
+    } else if (selectedFormat === "wav") {
+      args.push("--audio-format", "wav");
+    }
+    args.push("-o", outputTemplate);
   } else {
-    args.push(
-      "-f",
-      `bestvideo[height<=${selectedQuality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${selectedQuality}]+bestaudio/best[height<=${selectedQuality}]/best`,
-      "--merge-output-format",
-      "mp4",
-      "-o",
-      outputTemplate
-    );
+    // Video formats: mp4 or mkv (High Quality 1080p, 2K 1440p, 4K 2160p)
+    // Merge highest bitrate video stream + best audio stream
+    if (selectedFormat === "mkv") {
+      args.push(
+        "-f",
+        `bestvideo[height<=${selectedQuality}]+bestaudio/best[height<=${selectedQuality}]/best`,
+        "--merge-output-format",
+        "mkv"
+      );
+    } else {
+      // High-performance MP4 merge
+      args.push(
+        "-f",
+        `bestvideo[height<=${selectedQuality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${selectedQuality}]+bestaudio/best[height<=${selectedQuality}]/best`,
+        "--merge-output-format",
+        "mp4"
+      );
+    }
+
+    if (wantsSubs) {
+      args.push(
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-langs",
+        language === "all" ? "all" : `${language},en.*`,
+        "--embed-subs"
+      );
+    }
+
+    args.push("-o", outputTemplate);
   }
 
   args.push(url);
@@ -513,29 +640,23 @@ app.post("/download", (req, res) => {
   child.stdout.on("data", (data) => {
     const output = data.toString();
 
-    // Example:
-    // [download]  25.4% of 10.50MiB at ...
-    const match = output.match(
-      /\[download\]\s+(\d+(?:\.\d+)?)%/
-    );
-
+    // Track percent progress
+    const match = output.match(/\[download\]\s+(\d+(?:\.\d+)?)%/);
     if (match) {
-      job.progress = Math.min(
-        100,
-        parseFloat(match[1])
-      );
+      job.progress = Math.min(100, parseFloat(match[1]));
     }
 
-    // Sometimes yt-dlp reports destination/title
-    const destinationMatch = output.match(
-      /Destination:\s+(.+)/
-    );
-
-    if (destinationMatch) {
-      job.filename = path.basename(
-        destinationMatch[1].trim()
-      );
+    // Destination filename tracker
+    const destMatch = output.match(/Destination:\s+(.+)/);
+    if (destMatch) {
+      job.filename = path.basename(destMatch[1].trim());
     }
+
+    const mergeMatch = output.match(/\[Merger\]\s+Merging formats into\s+"([^"]+)"/);
+    if (mergeMatch) {
+      job.filename = path.basename(mergeMatch[1].trim());
+    }
+
     saveJob(job);
   });
 
@@ -550,31 +671,67 @@ app.post("/download", (req, res) => {
     saveJob(job);
   });
 
-  child.on("close", (code) => {
+  child.on("close", async (code) => {
     job.process = null;
 
     if (code !== 0) {
       job.status = "error";
-      job.error =
-        stderr.trim() ||
-        `yt-dlp exited with code ${code}`;
+      job.error = stderr.trim() || `yt-dlp exited with code ${code}`;
       saveJob(job);
       return;
     }
 
-    const file = findDownloadedFile(
-      job.folder,
-      selectedFormat
-    );
+    // If it's a playlist or multiple files were downloaded, bundle them into a ZIP archive
+    const downloadedFiles = findDownloadedFiles(job.folder);
 
-    if (!file) {
+    if (downloadedFiles.length === 0) {
       job.status = "error";
-      job.error = "Download completed but output file was not found.";
+      job.error = "Download completed but no file was generated.";
       saveJob(job);
       return;
     }
 
-    job.filename = file;
+    if (isPlaylist || downloadedFiles.length > 1) {
+      const zipName = `Playlist_${job.id}.zip`;
+      const zipPath = path.join(job.folder, zipName);
+      const output = fs.createWriteStream(zipPath);
+      const archive = archiver("zip", { zlib: { level: 6 } });
+
+      output.on("close", () => {
+        job.filename = zipName;
+        job.progress = 100;
+        job.status = "completed";
+        saveJob(job);
+      });
+
+      archive.on("error", (err) => {
+        job.status = "error";
+        job.error = `Failed to create zip: ${err.message}`;
+        saveJob(job);
+      });
+
+      archive.pipe(output);
+
+      for (const f of downloadedFiles) {
+        if (!f.endsWith(".zip")) {
+          archive.file(path.join(job.folder, f), { name: f });
+        }
+      }
+
+      archive.finalize();
+      return;
+    }
+
+    // Single file download
+    const singleFile = downloadedFiles[0] || findDownloadedFile(job.folder, selectedFormat);
+    if (!singleFile) {
+      job.status = "error";
+      job.error = "Downloaded file not found.";
+      saveJob(job);
+      return;
+    }
+
+    job.filename = singleFile;
     job.progress = 100;
     job.status = "completed";
     saveJob(job);
@@ -601,6 +758,7 @@ app.get("/status/:jobId", (req, res) => {
     progress: job.progress,
     filename: job.filename,
     error: job.error,
+    isPlaylist: job.isPlaylist,
     downloadUrl:
       job.status === "completed"
         ? `${req.originalUrl && req.originalUrl.includes("/yt-down") ? "/yt-down" : ""}/download/${job.id}/${encodeURIComponent(
