@@ -2,6 +2,11 @@ node_modules/
 downloads/
 movi3s/
 cloudflared.exe
+ffmpeg
+ffprobe
+yt-dlp
+*.bundle.js
+restart.txt
 .env
 *.log
 .DS_Store

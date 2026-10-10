@@ -6,14 +6,33 @@ const fs = require("fs");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// yt-dlp executable (supports cloud environment PATH or local Windows fallback)
-const defaultWinYtdlp =
-  "C:\\Users\\Jaidev\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\Scripts\\yt-dlp.exe";
-const YTDLP =
-  process.env.YTDLP_PATH ||
-  (process.platform === "win32" && fs.existsSync(defaultWinYtdlp)
-    ? defaultWinYtdlp
-    : "yt-dlp");
+// Resolve yt-dlp executable (supports cPanel bundled binary, env var, system PATH, or local Windows)
+function resolveYtdlp() {
+  if (process.env.YTDLP_PATH && fs.existsSync(process.env.YTDLP_PATH)) {
+    return process.env.YTDLP_PATH;
+  }
+  const bundledLinux = path.join(__dirname, "yt-dlp");
+  if (process.platform !== "win32" && fs.existsSync(bundledLinux)) {
+    try {
+      fs.chmodSync(bundledLinux, 0o755);
+    } catch {}
+    return bundledLinux;
+  }
+  const bundledLinuxBin = path.join(__dirname, "bin", "yt-dlp");
+  if (process.platform !== "win32" && fs.existsSync(bundledLinuxBin)) {
+    try {
+      fs.chmodSync(bundledLinuxBin, 0o755);
+    } catch {}
+    return bundledLinuxBin;
+  }
+  const defaultWinYtdlp =
+    "C:\\Users\\Jaidev\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\Scripts\\yt-dlp.exe";
+  if (process.platform === "win32" && fs.existsSync(defaultWinYtdlp)) {
+    return defaultWinYtdlp;
+  }
+  return "yt-dlp";
+}
+const YTDLP = resolveYtdlp();
 
 const DOWNLOAD_ROOT = path.join(__dirname, "downloads");
 
@@ -38,8 +57,17 @@ if (
   }
 }
 
+// Support subfolder mounting from cPanel / LiteSpeed (e.g. /yt-down)
+app.use((req, res, next) => {
+  if (req.url.startsWith("/yt-down")) {
+    req.url = req.url.slice("/yt-down".length) || "/";
+  }
+  next();
+});
+
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+app.use("/yt-down", express.static(path.join(__dirname, "public")));
 
 const jobs = new Map();
 
@@ -49,6 +77,38 @@ function safeName(name) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 180);
+}
+
+function saveJob(job) {
+  if (!job || !job.folder) return;
+  try {
+    const metaPath = path.join(job.folder, "job.json");
+    const data = {
+      id: job.id,
+      status: job.status,
+      progress: job.progress,
+      filename: job.filename,
+      error: job.error,
+      folder: job.folder,
+      createdAt: job.createdAt,
+    };
+    fs.writeFileSync(metaPath, JSON.stringify(data), "utf8");
+  } catch {}
+}
+
+function getJob(id) {
+  const memJob = jobs.get(id);
+  if (memJob) return memJob;
+  const folder = path.join(DOWNLOAD_ROOT, id);
+  const metaPath = path.join(folder, "job.json");
+  if (fs.existsSync(metaPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+      jobs.set(id, data);
+      return data;
+    } catch {}
+  }
+  return null;
 }
 
 function createJob() {
@@ -61,7 +121,7 @@ function createJob() {
 
   fs.mkdirSync(folder, { recursive: true });
 
-  jobs.set(id, {
+  const job = {
     id,
     status: "starting",
     progress: 0,
@@ -70,9 +130,12 @@ function createJob() {
     process: null,
     folder,
     createdAt: Date.now(),
-  });
+  };
 
-  return jobs.get(id);
+  jobs.set(id, job);
+  saveJob(job);
+
+  return job;
 }
 
 function findDownloadedFile(folder, format) {
@@ -118,6 +181,78 @@ app.get("/health", (req, res) => {
     service: "YouTube Downloader",
     jobs: jobs.size,
   });
+});
+
+app.get("/diag", (req, res) => {
+  const pyCandidates = [
+    "/usr/bin/python3",
+    "/usr/local/bin/python3",
+    "/opt/alt/python312/bin/python3",
+    "/opt/alt/python311/bin/python3",
+    "/opt/alt/python310/bin/python3",
+  ];
+  const pyResults = pyCandidates.map((p) => ({
+    path: p,
+    exists: fs.existsSync(p),
+  }));
+
+  const { execSync } = require("child_process");
+  let ytdlpTest = "pending";
+  try {
+    ytdlpTest = execSync(`"${YTDLP}" --version`, {
+      env: { ...process.env, TMPDIR: path.join(__dirname, "tmp") },
+      encoding: "utf8",
+      timeout: 5000,
+    }).trim();
+  } catch (err) {
+    ytdlpTest = `error: ${err.message}`;
+  }
+
+  res.json({
+    ok: true,
+    platform: process.platform,
+    YTDLP,
+    ytdlpTest,
+    pyResults,
+  });
+});
+
+app.get("/setup-ffmpeg", (req, res) => {
+  const { execSync } = require("child_process");
+  try {
+    const pyScript = `import urllib.request, tarfile, os, shutil
+print("Downloading ffmpeg...")
+urllib.request.urlretrieve("https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz", "f.tar.xz")
+print("Extracting...")
+with tarfile.open("f.tar.xz") as t:
+    for m in t.getmembers():
+        if m.name.endswith("/ffmpeg") or m.name.endswith("/ffprobe"):
+            base = os.path.basename(m.name)
+            f = t.extractfile(m)
+            with open(base, "wb") as out:
+                shutil.copyfileobj(f, out)
+            os.chmod(base, 0o755)
+os.remove("f.tar.xz")
+print("Done!")
+`;
+    fs.writeFileSync(path.join(__dirname, "setup_ffmpeg.py"), pyScript);
+    const output = execSync("/opt/alt/python312/bin/python3 setup_ffmpeg.py", {
+      cwd: __dirname,
+      encoding: "utf8",
+      timeout: 180000,
+    });
+    try {
+      fs.unlinkSync(path.join(__dirname, "setup_ffmpeg.py"));
+    } catch {}
+    res.json({
+      ok: true,
+      output,
+      ffmpeg: fs.existsSync(path.join(__dirname, "ffmpeg")),
+      ffprobe: fs.existsSync(path.join(__dirname, "ffprobe")),
+    });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
 });
 
 app.post("/download", (req, res) => {
@@ -180,6 +315,15 @@ app.post("/download", (req, res) => {
     args.push("--proxy", process.env.YTDLP_PROXY || process.env.HTTP_PROXY);
   }
 
+  // Check for bundled ffmpeg
+  const bundledFfmpeg = path.join(__dirname, "ffmpeg");
+  if (fs.existsSync(bundledFfmpeg)) {
+    try {
+      fs.chmodSync(bundledFfmpeg, 0o755);
+    } catch {}
+    args.push("--ffmpeg-location", bundledFfmpeg);
+  }
+
   // Check for cookies.txt in root directory or custom path
   const cookiesPath =
     process.env.COOKIES_PATH || path.join(__dirname, "cookies.txt");
@@ -215,6 +359,11 @@ app.post("/download", (req, res) => {
   const child = spawn(YTDLP, args, {
     shell: false,
     windowsHide: true,
+    env: {
+      ...process.env,
+      TMPDIR: path.join(__dirname, "tmp"),
+      PATH: `/opt/alt/python312/bin:/opt/alt/python311/bin:${process.env.PATH || ""}`,
+    },
   });
 
   job.process = child;
@@ -248,6 +397,7 @@ app.post("/download", (req, res) => {
         destinationMatch[1].trim()
       );
     }
+    saveJob(job);
   });
 
   child.stderr.on("data", (data) => {
@@ -258,6 +408,7 @@ app.post("/download", (req, res) => {
     job.status = "error";
     job.error = error.message;
     job.process = null;
+    saveJob(job);
   });
 
   child.on("close", (code) => {
@@ -268,7 +419,7 @@ app.post("/download", (req, res) => {
       job.error =
         stderr.trim() ||
         `yt-dlp exited with code ${code}`;
-
+      saveJob(job);
       return;
     }
 
@@ -280,12 +431,14 @@ app.post("/download", (req, res) => {
     if (!file) {
       job.status = "error";
       job.error = "Download completed but output file was not found.";
+      saveJob(job);
       return;
     }
 
     job.filename = file;
     job.progress = 100;
     job.status = "completed";
+    saveJob(job);
   });
 
   res.json({
@@ -295,7 +448,7 @@ app.post("/download", (req, res) => {
 });
 
 app.get("/status/:jobId", (req, res) => {
-  const job = jobs.get(req.params.jobId);
+  const job = getJob(req.params.jobId);
 
   if (!job) {
     return res.status(404).json({
@@ -311,7 +464,7 @@ app.get("/status/:jobId", (req, res) => {
     error: job.error,
     downloadUrl:
       job.status === "completed"
-        ? `/download/${job.id}/${encodeURIComponent(
+        ? `${req.originalUrl && req.originalUrl.includes("/yt-down") ? "/yt-down" : ""}/download/${job.id}/${encodeURIComponent(
             job.filename
           )}`
         : null,
@@ -319,7 +472,7 @@ app.get("/status/:jobId", (req, res) => {
 });
 
 app.post("/cancel/:jobId", (req, res) => {
-  const job = jobs.get(req.params.jobId);
+  const job = getJob(req.params.jobId);
 
   if (!job) {
     return res.status(404).json({
@@ -355,13 +508,15 @@ app.post("/cancel/:jobId", (req, res) => {
     });
   } catch {}
 
+  saveJob(job);
+
   res.json({
     success: true,
   });
 });
 
 app.get("/download/:jobId/:filename", (req, res) => {
-  const job = jobs.get(req.params.jobId);
+  const job = getJob(req.params.jobId);
 
   if (!job || !job.filename) {
     return res.status(404).send("File not found.");

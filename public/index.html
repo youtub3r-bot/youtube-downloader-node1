@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <base href="./">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>YouTube Downloader</title>
@@ -494,7 +495,7 @@
       downloadFileBtn.style.display = 'none';
 
       try {
-        const res = await fetch('/download', {
+        const res = await fetch('download', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -524,7 +525,7 @@
 
       pollInterval = setInterval(async () => {
         try {
-          const res = await fetch(`/status/${jobId}`);
+          const res = await fetch(`status/${jobId}`);
           if (!res.ok) {
             clearInterval(pollInterval);
             showError('Unable to fetch job status.');
@@ -579,7 +580,7 @@
     cancelBtn.addEventListener('click', async () => {
       if (!currentJobId) return;
       try {
-        await fetch(`/cancel/${currentJobId}`, { method: 'POST' });
+        await fetch(`cancel/${currentJobId}`, { method: 'POST' });
         if (pollInterval) clearInterval(pollInterval);
         statusPanel.classList.remove('active');
         submitBtn.disabled = false;
