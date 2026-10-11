@@ -66,6 +66,17 @@ app.use((req, res, next) => {
   next();
 });
 
+// Enable CORS for frontend running on Cloudflare (e.g. alldownloader.in)
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/yt-down", express.static(path.join(__dirname, "public")));
@@ -761,7 +772,7 @@ app.get("/status/:jobId", (req, res) => {
     isPlaylist: job.isPlaylist,
     downloadUrl:
       job.status === "completed"
-        ? `${req.originalUrl && req.originalUrl.includes("/yt-down") ? "/yt-down" : ""}/download/${job.id}/${encodeURIComponent(
+        ? `https://asmultiverse.site/yt-down/download/${job.id}/${encodeURIComponent(
             job.filename
           )}`
         : null,
