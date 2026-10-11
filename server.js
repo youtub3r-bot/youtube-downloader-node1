@@ -258,6 +258,75 @@ app.get("/diag", (req, res) => {
   });
 });
 
+app.get("/speedtest", async (req, res) => {
+  const https = require("https");
+  const http = require("http");
+
+  // Helper to measure download of a file
+  function measureDownload(url) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const client = url.startsWith("https") ? https : http;
+      let totalBytes = 0;
+      let firstByteTime = 0;
+
+      const request = client.get(url, (response) => {
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          return measureDownload(response.headers.location).then(resolve);
+        }
+        firstByteTime = Date.now() - start;
+
+        response.on("data", (chunk) => {
+          totalBytes += chunk.length;
+        });
+
+        response.on("end", () => {
+          const totalDurationSec = (Date.now() - start) / 1000;
+          const mbps = (totalBytes * 8) / (totalDurationSec * 1024 * 1024);
+          resolve({
+            totalBytes,
+            totalMB: (totalBytes / (1024 * 1024)).toFixed(2),
+            timeSec: totalDurationSec.toFixed(2),
+            speedMbps: mbps.toFixed(2),
+            latencyMs: firstByteTime,
+          });
+        });
+      });
+
+      request.on("error", (err) => {
+        resolve({ error: err.message });
+      });
+
+      request.setTimeout(15000, () => {
+        request.destroy();
+        resolve({ error: "Download test timed out" });
+      });
+    });
+  }
+
+  try {
+    // Test 1: Cloudflare 25MB test file
+    const cfResult = await measureDownload("https://speed.cloudflare.com/__down?bytes=26214400");
+    // Test 2: Fastly CDN 10MB test file
+    const fastlyResult = await measureDownload("https://proof.ovh.net/files/10Mb.dat");
+
+    res.json({
+      ok: true,
+      serverHost: "HostyCare cPanel",
+      results: {
+        cloudflareEdge: cfResult,
+        ovhEdge: fastlyResult,
+      },
+      averageSpeedMbps:
+        cfResult.speedMbps && fastlyResult.speedMbps
+          ? (((parseFloat(cfResult.speedMbps) + parseFloat(fastlyResult.speedMbps)) / 2)).toFixed(2) + " Mbps"
+          : (cfResult.speedMbps || fastlyResult.speedMbps || "N/A") + " Mbps",
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // Video & Playlist Info Extraction
 app.post("/info", (req, res) => {
   const { url } = req.body;
@@ -451,6 +520,7 @@ app.post("/info", (req, res) => {
                 data.duration % 60
               ).padStart(2, "0")}`
             : null),
+        durationSeconds: typeof data.duration === "number" ? data.duration : null,
         channel: data.uploader || data.channel || "",
         videoQualities,
         audioQualities,
@@ -476,6 +546,8 @@ app.post("/download", (req, res) => {
     includeSubs,
     subLang,
     playlistMax,
+    clipStart,
+    clipEnd,
   } = req.body;
 
   if (!url || typeof url !== "string") {
@@ -542,6 +614,14 @@ app.post("/download", (req, res) => {
     args.push("--yes-playlist", "--playlist-end", String(maxPlaylistItems));
   } else {
     args.push("--no-playlist");
+  }
+
+  // Clip duration slicing support (e.g. clipStart: "01:20", clipEnd: "02:45")
+  if (clipStart || clipEnd) {
+    const startStr = (clipStart || "0").trim();
+    const endStr = (clipEnd || "inf").trim();
+    args.push("--download-sections", `*${startStr}-${endStr}`);
+    args.push("--force-keyframes-at-cuts");
   }
 
   // Optional proxy support
