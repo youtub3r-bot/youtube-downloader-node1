@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /download/
+Disallow: /status/
+Disallow: /cancel/
+
+Sitemap: https://alldownloader.in/yt/sitemap.xml

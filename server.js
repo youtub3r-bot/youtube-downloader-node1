@@ -7,6 +7,17 @@ const archiver = require("archiver");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Ensure modern Python 3.10+ is in PATH on cPanel / CloudLinux
+if (process.platform !== "win32") {
+  const altPythons = ["/opt/alt/python311/bin", "/opt/alt/python312/bin", "/opt/alt/python310/bin"];
+  for (const pyPath of altPythons) {
+    if (fs.existsSync(pyPath)) {
+      process.env.PATH = pyPath + ":" + (process.env.PATH || "");
+      break;
+    }
+  }
+}
+
 // Resolve yt-dlp executable (supports cPanel bundled binary, env var, system PATH, or local Windows)
 function resolveYtdlp() {
   if (process.env.YTDLP_PATH && fs.existsSync(process.env.YTDLP_PATH)) {
@@ -81,6 +92,23 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/yt-down", express.static(path.join(__dirname, "public")));
 
+app.get("/test-client", (req, res) => {
+  const { execSync } = require("child_process");
+  const clients = ["android", "ios", "mweb", "tv", "tv_embedded", "web_creator"];
+  const url = req.query.url || "https://youtu.be/m-lwVG1Kax8";
+  const results = {};
+  for (const client of clients) {
+    try {
+      const out = execSync(`"${YTDLP}" --dump-single-json --no-playlist --extractor-args "youtube:player-client=${client}" "${url}"`, { timeout: 15000, stdio: ["pipe", "pipe", "pipe"] }).toString();
+      const parsed = JSON.parse(out);
+      results[client] = { ok: true, title: parsed.title, formats: (parsed.formats || []).length };
+    } catch (e) {
+      results[client] = { ok: false, err: e.message + (e.stderr ? " | " + e.stderr.toString().slice(0, 150) : "") };
+    }
+  }
+  res.json(results);
+});
+
 const jobs = new Map();
 
 function safeName(name) {
@@ -89,6 +117,49 @@ function safeName(name) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 180);
+}
+
+function detectPlatform(url) {
+  if (!url || typeof url !== "string") return null;
+  const cleanUrl = url.trim();
+  if (/^https?:\/\/(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//i.test(cleanUrl)) {
+    return "youtube";
+  }
+  if (/^https?:\/\/(www\.)?instagram\.com\//i.test(cleanUrl)) {
+    return "instagram";
+  }
+  if (/^https?:\/\/(www\.)?threads\.net\//i.test(cleanUrl)) {
+    return "threads";
+  }
+  if (/^https?:\/\/(www\.)?(twitter\.com|x\.com)\//i.test(cleanUrl)) {
+    return "twitter";
+  }
+  if (/^https?:\/\/(www\.)?(tiktok\.com)\//i.test(cleanUrl)) {
+    return "tiktok";
+  }
+  if (/^https?:\/\/(www\.)?(facebook\.com|fb\.watch)\//i.test(cleanUrl)) {
+    return "facebook";
+  }
+  return null;
+}
+
+function isValidMediaUrl(url) {
+  return !!detectPlatform(url);
+}
+
+function normalizeTime(t, fallback) {
+  if (!t || typeof t !== "string") return fallback;
+  const clean = t.trim();
+  if (!clean) return fallback;
+  if (/^\d+$/.test(clean)) return clean;
+  const parts = clean.split(":").map(Number);
+  if (parts.some(isNaN)) return fallback;
+  if (parts.length === 3) {
+    return String(Math.max(0, parts[0]) * 3600 + Math.max(0, parts[1]) * 60 + Math.max(0, parts[2]));
+  } else if (parts.length === 2) {
+    return String(Math.max(0, parts[0]) * 60 + Math.max(0, parts[1]));
+  }
+  return clean;
 }
 
 function saveJob(job) {
@@ -214,7 +285,10 @@ function cleanupOldJobs() {
   }
 }
 
-setInterval(cleanupOldJobs, 10 * 60 * 1000);
+const cleanupTimer = setInterval(cleanupOldJobs, 10 * 60 * 1000);
+if (cleanupTimer && typeof cleanupTimer.unref === "function") {
+  cleanupTimer.unref();
+}
 
 app.get("/health", (req, res) => {
   res.json({
@@ -332,26 +406,41 @@ app.post("/info", (req, res) => {
   const { url } = req.body;
 
   if (!url || typeof url !== "string") {
-    return res.status(400).json({ error: "Please enter a YouTube URL." });
+    return res.status(400).json({ error: "Please enter a valid URL." });
   }
 
-  if (!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) {
-    return res.status(400).json({ error: "Please enter a valid YouTube URL." });
+  const platform = detectPlatform(url);
+  if (!platform) {
+    return res.status(400).json({
+      error: "Please enter a valid video or playlist URL (YouTube, Instagram, Threads, or X).",
+    });
   }
 
-  const isPlaylist = url.includes("list=");
+  const isPlaylist = platform === "youtube" && url.includes("list=");
 
   const args = [
     "--dump-single-json",
     "--no-warnings",
-    "--remote-components",
-    "ejs:github",
-    "--js-runtimes",
-    "node",
     "--geo-bypass",
     "--geo-bypass-country",
     process.env.GEO_BYPASS_COUNTRY || "IN",
   ];
+
+  if (platform === "youtube") {
+    args.push(
+      "--extractor-args",
+      "youtube:player-client=android,web",
+      "--remote-components",
+      "ejs:github",
+      "--js-runtimes",
+      "node"
+    );
+  } else {
+    args.push(
+      "--user-agent",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    );
+  }
 
   if (isPlaylist) {
     // Limit playlist extraction to first 30 entries for speed and responsiveness
@@ -370,7 +459,7 @@ app.post("/info", (req, res) => {
     args.push("--cookies", cookiesPath);
   }
 
-  args.push(url);
+  args.push(url.trim());
 
   const child = spawn(YTDLP, args, {
     shell: false,
@@ -381,6 +470,18 @@ app.post("/info", (req, res) => {
       PATH: `/opt/alt/python312/bin:/opt/alt/python311/bin:${process.env.PATH || ""}`,
     },
   });
+
+  let timedOut = false;
+  const timeoutMs = parseInt(process.env.INFO_TIMEOUT_MS) || 45000;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      child.kill("SIGKILL");
+    } catch {}
+    if (!res.headersSent) {
+      res.status(504).json({ error: "Metadata extraction timed out after 45 seconds." });
+    }
+  }, timeoutMs);
 
   let stdout = "";
   let stderr = "";
@@ -394,6 +495,9 @@ app.post("/info", (req, res) => {
   });
 
   child.on("close", (code) => {
+    clearTimeout(timer);
+    if (timedOut || res.headersSent) return;
+
     if (code !== 0 || !stdout.trim()) {
       return res.status(500).json({
         error: stderr.trim() || "Failed to fetch video/playlist information.",
@@ -552,13 +656,25 @@ app.post("/download", (req, res) => {
 
   if (!url || typeof url !== "string") {
     return res.status(400).json({
-      error: "Please enter a YouTube URL.",
+      error: "Please enter a valid URL.",
     });
   }
 
-  if (!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) {
+  const platform = detectPlatform(url);
+  if (!platform) {
     return res.status(400).json({
-      error: "Please enter a valid YouTube URL.",
+      error: "Please enter a valid video or playlist URL (YouTube, Instagram, Threads, or X).",
+    });
+  }
+
+  // Concurrency guard to protect against memory/process exhaustion
+  const activeDownloads = Array.from(jobs.values()).filter(
+    (j) => j && (j.status === "downloading" || j.status === "starting")
+  ).length;
+  const MAX_CONCURRENT_DOWNLOADS = parseInt(process.env.MAX_CONCURRENT_DOWNLOADS) || 6;
+  if (activeDownloads >= MAX_CONCURRENT_DOWNLOADS) {
+    return res.status(429).json({
+      error: "Server download queue is currently full. Please try again in 1-2 minutes.",
     });
   }
 
@@ -586,7 +702,7 @@ app.post("/download", (req, res) => {
     selectedQuality = "auto";
   }
 
-  const isPlaylist = url.includes("list=");
+  const isPlaylist = platform === "youtube" && url.includes("list=");
   const maxPlaylistItems = Math.min(Math.max(parseInt(playlistMax) || 10, 1), 30);
 
   const job = createJob();
@@ -601,14 +717,26 @@ app.post("/download", (req, res) => {
     "--newline",
     "--restrict-filenames",
     "--progress",
-    "--remote-components",
-    "ejs:github",
-    "--js-runtimes",
-    "node",
     "--geo-bypass",
     "--geo-bypass-country",
     process.env.GEO_BYPASS_COUNTRY || "IN",
   ];
+
+  if (platform === "youtube") {
+    args.push(
+      "--extractor-args",
+      "youtube:player-client=android,web",
+      "--remote-components",
+      "ejs:github",
+      "--js-runtimes",
+      "node"
+    );
+  } else {
+    args.push(
+      "--user-agent",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    );
+  }
 
   if (isPlaylist) {
     args.push("--yes-playlist", "--playlist-end", String(maxPlaylistItems));
@@ -618,10 +746,11 @@ app.post("/download", (req, res) => {
 
   // Clip duration slicing support (e.g. clipStart: "01:20", clipEnd: "02:45")
   if (clipStart || clipEnd) {
-    const startStr = (clipStart || "0").trim();
-    const endStr = (clipEnd || "inf").trim();
-    args.push("--download-sections", `*${startStr}-${endStr}`);
-    args.push("--force-keyframes-at-cuts");
+    const startSec = normalizeTime(clipStart, "0");
+    const endSec = normalizeTime(clipEnd, "inf");
+    args.push("--download-sections", `*${startSec}-${endSec}`);
+    // Limit ffmpeg threads to 1 or 2 to avoid memory spikes / SIGKILL on shared hosting
+    args.push("--postprocessor-args", "ffmpeg:-threads 2");
   }
 
   // Optional proxy support
@@ -680,11 +809,13 @@ app.post("/download", (req, res) => {
     args.push("-o", outputTemplate);
   } else {
     // Video formats: mp4 or mkv (High Quality 1080p, 2K 1440p, 4K 2160p)
-    // Merge highest bitrate video stream + best audio stream
+    const isClip = !!(clipStart || clipEnd);
     if (selectedFormat === "mkv") {
       args.push(
         "-f",
-        `bestvideo[height<=${selectedQuality}]+bestaudio/best[height<=${selectedQuality}]/best`,
+        isClip
+          ? `bestvideo[height<=${selectedQuality}][vcodec^=avc]+bestaudio/bestvideo[height<=${selectedQuality}]+bestaudio/best`
+          : `bestvideo[height<=${selectedQuality}]+bestaudio/best[height<=${selectedQuality}]/best`,
         "--merge-output-format",
         "mkv"
       );
@@ -692,7 +823,9 @@ app.post("/download", (req, res) => {
       // High-performance MP4 merge
       args.push(
         "-f",
-        `bestvideo[height<=${selectedQuality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${selectedQuality}]+bestaudio/best[height<=${selectedQuality}]/best`,
+        isClip
+          ? `bestvideo[height<=${selectedQuality}][vcodec^=avc]+bestaudio[ext=m4a]/bestvideo[height<=${selectedQuality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${selectedQuality}]+bestaudio/best[height<=${selectedQuality}]/best`
+          : `bestvideo[height<=${selectedQuality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${selectedQuality}]+bestaudio/best[height<=${selectedQuality}]/best`,
         "--merge-output-format",
         "mp4"
       );
@@ -711,7 +844,7 @@ app.post("/download", (req, res) => {
     args.push("-o", outputTemplate);
   }
 
-  args.push(url);
+  args.push(url.trim());
 
   const child = spawn(YTDLP, args, {
     shell: false,
@@ -726,15 +859,33 @@ app.post("/download", (req, res) => {
   job.process = child;
   job.status = "downloading";
 
+  // Watchdog timer (max download time 15 minutes by default)
+  const downloadTimeoutMs = (parseInt(process.env.DOWNLOAD_TIMEOUT_MINUTES) || 15) * 60 * 1000;
+  const dlTimer = setTimeout(() => {
+    if (job.process) {
+      try {
+        job.process.kill("SIGKILL");
+      } catch {}
+    }
+    job.status = "error";
+    job.error = "Download timed out after exceeding 15 minutes limit.";
+    job.process = null;
+    saveJob(job);
+  }, downloadTimeoutMs);
+
   let stderr = "";
 
   child.stdout.on("data", (data) => {
     const output = data.toString();
 
-    // Track percent progress
+    // Track percent progress from yt-dlp
     const match = output.match(/\[download\]\s+(\d+(?:\.\d+)?)%/);
     if (match) {
       job.progress = Math.min(100, parseFloat(match[1]));
+    }
+
+    if (output.includes("[download] Destination:") || output.includes("Downloading 1 time ranges")) {
+      if (job.progress === 0) job.progress = 25;
     }
 
     // Destination filename tracker
@@ -746,16 +897,26 @@ app.post("/download", (req, res) => {
     const mergeMatch = output.match(/\[Merger\]\s+Merging formats into\s+"([^"]+)"/);
     if (mergeMatch) {
       job.filename = path.basename(mergeMatch[1].trim());
+      job.progress = Math.max(job.progress, 85);
     }
 
     saveJob(job);
   });
 
   child.stderr.on("data", (data) => {
-    stderr += data.toString();
+    const errText = data.toString();
+    stderr += errText;
+
+    // Track ffmpeg time progress if clipping
+    const timeMatch = errText.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+    if (timeMatch && job.progress < 90) {
+      job.progress = Math.min(90, job.progress + 10);
+      saveJob(job);
+    }
   });
 
   child.on("error", (error) => {
+    clearTimeout(dlTimer);
     job.status = "error";
     job.error = error.message;
     job.process = null;
@@ -763,6 +924,7 @@ app.post("/download", (req, res) => {
   });
 
   child.on("close", async (code) => {
+    clearTimeout(dlTimer);
     job.process = null;
 
     if (code !== 0) {
@@ -843,6 +1005,12 @@ app.get("/status/:jobId", (req, res) => {
     });
   }
 
+  // Derive API base dynamically for flexibility across custom domains & local environments
+  const host = req.get("host") || `localhost:${PORT}`;
+  const protocol = req.protocol || "http";
+  const defaultBase = `${protocol}://${host}/yt-down`;
+  const apiBase = process.env.PUBLIC_BASE_URL || defaultBase;
+
   res.json({
     id: job.id,
     status: job.status,
@@ -851,10 +1019,8 @@ app.get("/status/:jobId", (req, res) => {
     error: job.error,
     isPlaylist: job.isPlaylist,
     downloadUrl:
-      job.status === "completed"
-        ? `https://asmultiverse.site/yt-down/download/${job.id}/${encodeURIComponent(
-            job.filename
-          )}`
+      job.status === "completed" && job.filename
+        ? `${apiBase}/download/${job.id}/${encodeURIComponent(job.filename)}`
         : null,
   });
 });
@@ -906,7 +1072,7 @@ app.post("/cancel/:jobId", (req, res) => {
 app.get("/download/:jobId/:filename", (req, res) => {
   const job = getJob(req.params.jobId);
 
-  if (!job || !job.filename) {
+  if (!job) {
     return res.status(404).send("File not found.");
   }
 
@@ -914,27 +1080,50 @@ app.get("/download/:jobId/:filename", (req, res) => {
     decodeURIComponent(req.params.filename)
   );
 
-  if (requested !== path.basename(job.filename)) {
-    return res.status(403).send("Access denied.");
+  let targetFileName = job.filename;
+
+  // If the file exists directly as job.filename or requested
+  let filePath = path.join(job.folder, targetFileName || requested);
+  if (!fs.existsSync(filePath)) {
+    filePath = path.join(job.folder, requested);
   }
 
-  const filePath = path.join(
-    job.folder,
-    job.filename
-  );
+  // Fallback: check any generated media file in the folder
+  if (!fs.existsSync(filePath)) {
+    const files = findDownloadedFiles(job.folder);
+    if (files.length > 0) {
+      targetFileName = files[0];
+      filePath = path.join(job.folder, targetFileName);
+    }
+  }
 
   if (!fs.existsSync(filePath)) {
     return res.status(404).send("File not found.");
   }
 
-  res.download(filePath, job.filename);
+  res.download(filePath, targetFileName || requested);
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log("");
   console.log("=================================");
-  console.log(" YouTube Downloader");
+  console.log(" Multi-Platform Media Downloader API");
   console.log("=================================");
   console.log(` http://localhost:${PORT}`);
   console.log("");
 });
+
+module.exports = {
+  app,
+  server,
+  detectPlatform,
+  isValidMediaUrl,
+  normalizeTime,
+  safeName,
+  jobs,
+  createJob,
+  getJob,
+  saveJob,
+  findDownloadedFile,
+  findDownloadedFiles,
+};
